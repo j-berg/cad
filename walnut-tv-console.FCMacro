@@ -1,0 +1,222 @@
+import FreeCAD as App
+import Part
+import time
+import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def hex_to_rgb(hex_color):
+    """Convert hex color to RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+
+# Create a new document
+doc = App.newDocument("TV_Console")
+
+# Define dimensions
+length = 1524  # 60 inches in mm
+width = 508  # 20 inches in mm
+height = 508  # 20 inches in mm
+thickness = 19.05  # 3/4 inches in mm
+radius = 76.2  # 3 inches in mm
+
+# Calculate new dimensions
+new_width = width - 2 * radius
+new_length = length - 2 * radius
+
+# Create individual parts
+# Back face
+back_face = Part.makeBox(new_length, thickness, height-2*thickness)
+back_face.translate(App.Vector(radius, width - thickness, thickness))
+
+# Bottom face with rounded corners
+bottom_face = Part.makeBox(length, width, thickness)
+bottom_face.translate(App.Vector(0, 0, 0))
+
+# Top face with rounded corners
+top_face = Part.makeBox(length, width, thickness)
+top_face.translate(App.Vector(0, 0, height - thickness))
+
+# Left side face
+left_side_face = Part.makeBox(thickness, new_width, height-2*thickness)
+left_side_face.translate(App.Vector(0, radius, thickness))
+
+# Right side face
+right_side_face = Part.makeBox(thickness, new_width, height-2*thickness)
+right_side_face.translate(App.Vector(length - thickness, radius, thickness))
+
+# Create hollow quarter cylinder corners
+outer_cylinder = Part.makeCylinder(radius, height-2*thickness, App.Vector(0, 0, 0), App.Vector(0, 0, 1), 90)
+inner_cylinder = Part.makeCylinder(radius - thickness, height-2*thickness, App.Vector(0, 0, 0), App.Vector(0, 0, 1), 90)
+
+# Position inner cylinder to create the correct hollow portion
+inner_cylinder.translate(App.Vector(0, 0, 0))
+
+corner_cylinder = outer_cylinder.cut(inner_cylinder)
+
+# Copy and translate/rotate the corner cylinders to correct positions
+corner_cylinder_left_front = corner_cylinder.copy()
+corner_cylinder_left_front.translate(App.Vector(radius, radius, thickness))
+corner_cylinder_left_front.rotate(App.Vector(radius, radius, 0), App.Vector(0, 0, 1), 180)
+
+corner_cylinder_right_front = corner_cylinder.copy()
+corner_cylinder_right_front.translate(App.Vector(length - radius, radius, thickness))
+corner_cylinder_right_front.rotate(App.Vector(length - radius, radius, 0), App.Vector(0, 0, 1), -90)
+
+corner_cylinder_left_back = corner_cylinder.copy()
+corner_cylinder_left_back.translate(App.Vector(radius, width - radius, thickness))
+corner_cylinder_left_back.rotate(App.Vector(radius, width - radius, 0), App.Vector(0, 0, 1), 90)
+
+corner_cylinder_right_back = corner_cylinder.copy()
+corner_cylinder_right_back.translate(App.Vector(length - radius, width - radius, thickness))
+
+# Round top and bottom corners 
+top_face_with_rounds = top_face.makeFillet(radius, [
+    top_face.Edges[0],  # Front-left
+    top_face.Edges[2],  # Front-right
+    top_face.Edges[4],  # Back-left
+    top_face.Edges[6]   # Back-right
+])
+
+bottom_face_with_rounds = bottom_face.makeFillet(radius, [
+    bottom_face.Edges[0],  # Front-left
+    bottom_face.Edges[2],  # Front-right
+    bottom_face.Edges[4],  # Back-left
+    bottom_face.Edges[6]   # Back-right
+])
+
+# Create the middle divider
+middle_divider = Part.makeBox(thickness, width-2*thickness, height-2*thickness)
+middle_divider.translate(App.Vector(length / 2 - thickness / 2, thickness, thickness))
+
+# Create the new style legs
+leg_height_total = 185  
+leg_height_top = 55 
+leg_height_bottom = 130  
+leg_diameter_top = 25  # Estimated diameter in mm
+leg_diameter_bottom = 25  # Estimated diameter in mm
+leg_plate_width = 76.2  # 3 inches in mm
+leg_plate_length = 60  # 2.36 inches in mm
+plate_thickness = 3  # Thickness of the plate in mm
+
+# Create the leg parts
+top_leg = Part.makeCylinder(leg_diameter_top / 2, leg_height_bottom)
+bottom_leg = Part.makeCylinder(leg_diameter_bottom / 2, leg_height_bottom)
+
+# Create the mounting plate
+mounting_plate = Part.makeBox(leg_plate_width, leg_plate_length, plate_thickness)
+mounting_plate.translate(App.Vector(0, -leg_plate_length / 2, leg_height_total + leg_height_top - thickness - 1))
+
+# Combine the parts to form the leg
+leg = top_leg.fuse(bottom_leg)
+leg.translate(App.Vector(0, 0, leg_height_bottom))
+leg = leg.fuse(mounting_plate)
+
+# Position legs 2 * radius from each corner of the bottom face
+leg1 = leg.copy()
+leg1.translate(App.Vector(0, radius, -leg_height_total - 2 * thickness))
+
+leg2 = leg.copy()
+leg2.translate(App.Vector(length, radius, -leg_height_total - 2 * thickness))
+leg2.rotate(App.Vector(length, width / 2, 0), App.Vector(0, 0, 1), 180)
+
+leg3 = leg.copy()
+leg3.translate(App.Vector(2, width - radius, -leg_height_total - 2 * thickness))
+
+leg4 = leg.copy()
+leg4.translate(App.Vector(length, width - radius, -leg_height_total - 2 * thickness))
+leg4.rotate(App.Vector(length, width / 2, 0), App.Vector(0, 0, 1), 180)
+
+# Create slatted doors
+door_width = (length - 2*radius ) / 2
+door_height = height - 2 * thickness
+slat_thickness = thickness
+
+
+def calculate_optimal_slat(door_width, slat_width, slat_gap_ratio):
+    num_slats = int((door_width + slat_gap_ratio) / (slat_width + slat_gap_ratio))
+    optimal_slat_width = (door_width - (num_slats - 1) * slat_gap_ratio) / num_slats
+    optimal_slat_gap = optimal_slat_width * slat_gap_ratio
+    return optimal_slat_width, optimal_slat_gap
+
+slat_gap_ratio = 0.5
+optimal_slat_width, optimal_slat_gap = calculate_optimal_slat(door_width, 25.4, slat_gap_ratio)
+
+def create_slatted_door(start_x, optimal_slat_width, optimal_slat_gap):
+    slats = []
+    current_x = start_x
+    while current_x < start_x + door_width:
+        slat = Part.makeBox(optimal_slat_width, slat_thickness, door_height)
+        slat.translate(App.Vector(current_x, 0, thickness))
+        slats.append(slat)
+        current_x += optimal_slat_width + optimal_slat_gap
+    
+    # Combine all slats into one shape
+    door = slats[0]
+    for slat in slats[1:]:
+        door = door.fuse(slat)
+    
+    # Add horizontal slats for stability
+	# Top
+    horizontal_slat_1 = Part.makeBox(door_width-slat_thickness, slat_thickness, optimal_slat_width)
+    horizontal_slat_1.translate(App.Vector(start_x+slat_thickness/2, thickness, 2 * thickness))
+
+	# Bottom
+    horizontal_slat_2 = horizontal_slat_1.copy()
+    horizontal_slat_2.translate(App.Vector(0, thickness, door_height - optimal_slat_width - 2 * thickness))
+
+    door = door.fuse(horizontal_slat_1)
+    door = door.fuse(horizontal_slat_2)
+    
+    return door
+
+front_left_door = create_slatted_door(radius, optimal_slat_width, optimal_slat_gap)
+front_right_door = create_slatted_door(radius + door_width, optimal_slat_width, optimal_slat_gap)
+
+# Add all parts to the document
+def add_part(shape, name, color):
+    part_obj = doc.addObject("Part::Feature", name)
+    part_obj.Shape = shape
+    part_obj.ViewObject.ShapeColor = color
+    return part_obj
+
+# Colors
+walnut_color = hex_to_rgb("#5C4033")  # Dark brown walnut color
+oak_color = hex_to_rgb("#d1af84")  # Oak color
+bronze_color = hex_to_rgb("#CD7F32")  # Bronze color
+
+parts = {
+    "BackFace": (back_face, walnut_color),
+    "BottomFace": (bottom_face_with_rounds, walnut_color),
+    "TopFace": (top_face_with_rounds, walnut_color),
+    "LeftSideFace": (left_side_face, walnut_color),
+    "RightSideFace": (right_side_face, walnut_color),
+    "CornerCylinderLeftFront": (corner_cylinder_left_front, walnut_color),
+    "CornerCylinderRightFront": (corner_cylinder_right_front, walnut_color),
+    "CornerCylinderLeftBack": (corner_cylinder_left_back, walnut_color),
+    "CornerCylinderRightBack": (corner_cylinder_right_back, walnut_color),
+    "MiddleDivider": (middle_divider, walnut_color),
+    "FrontLeftDoor": (front_left_door, oak_color),
+    "FrontRightDoor": (front_right_door, oak_color),
+    "Leg1": (leg1, bronze_color),
+    "Leg2": (leg2, bronze_color),
+    "Leg3": (leg3, bronze_color),
+    "Leg4": (leg4, bronze_color),
+}
+
+# Add parts and capture frames
+for name, (shape, color) in parts.items():
+    add_part(shape, name, color)
+
+# Recompute the document to apply changes
+doc.recompute()
+
+# Show the document
+App.Gui.SendMsgToActiveView("ViewFit")
+App.Gui.activeDocument().activeView().viewAxometric()
+
+# Correct orientation for viewing
+App.Gui.activeDocument().activeView().viewFront()
+App.Gui.SendMsgToActiveView("ViewFit")
